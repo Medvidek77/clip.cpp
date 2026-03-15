@@ -265,7 +265,7 @@ add_library(clip
 
 target_include_directories(clip PUBLIC . ggml/include ggml/src ggml)
 target_compile_features(clip PUBLIC cxx_std_11)
-target_link_libraries(clip PRIVATE ggml ${CLIP_EXTRA_LIBS})
+target_link_libraries(clip PRIVATE ggml Threads::Threads ${CLIP_EXTRA_LIBS})
 
 if (CLIP_VULKAN)
     target_compile_definitions(clip PUBLIC CLIP_USE_VULKAN)
