@@ -606,7 +606,7 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
     }
 
 #ifdef CLIP_USE_VULKAN
-    new_clip->backend = ggml_backend_vulkan_init(0);
+    new_clip->backend = ggml_backend_vk_init(0);
     if (!new_clip->backend) {
         fprintf(stderr, "%s: WARNING: failed to initialize vulkan backend, falling back to CPU\n", __func__);
         new_clip->backend = ggml_backend_cpu_init();
