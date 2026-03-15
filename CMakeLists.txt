@@ -272,8 +272,6 @@ if (CLIP_VULKAN)
 endif()
 
 if (BUILD_SHARED_LIBS)
-    set(CLIP_BUILD_EXAMPLES OFF)
-    set(CLIP_BUILD_TESTS OFF)
     set_target_properties(ggml PROPERTIES POSITION_INDEPENDENT_CODE ON)
     set_target_properties(clip PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_definitions(clip PRIVATE CLIP_SHARED CLIP_BUILD)
