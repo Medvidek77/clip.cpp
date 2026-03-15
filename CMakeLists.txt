@@ -263,7 +263,7 @@ add_library(clip
             clip.cpp
             clip.h)
 
-target_include_directories(clip PUBLIC . ggml/include)
+target_include_directories(clip PUBLIC . ggml/include ggml/src ggml)
 target_compile_features(clip PUBLIC cxx_std_11)
 target_link_libraries(clip PRIVATE ggml ${CLIP_EXTRA_LIBS})
 
