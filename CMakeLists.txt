@@ -55,6 +55,9 @@ endif()
 option(CLIP_ACCELERATE             "CLIP: enable Accelerate framework"                    ON)
 option(CLIP_OPENBLAS               "CLIP: use OpenBLAS"                                   OFF)
 
+# backends
+option(CLIP_VULKAN                 "CLIP: enable Vulkan backend"                          OFF)
+
 
 #
 # Compile flags
@@ -250,15 +253,23 @@ endif()
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
 
+if (CLIP_VULKAN)
+    set(GGML_VULKAN ON CACHE BOOL "ggml: enable Vulkan" FORCE)
+endif()
+
 add_subdirectory(ggml)
 
 add_library(clip
             clip.cpp
             clip.h)
 
-target_include_directories(clip PUBLIC .)
+target_include_directories(clip PUBLIC . ggml/include)
 target_compile_features(clip PUBLIC cxx_std_11)
 target_link_libraries(clip PRIVATE ggml ${CLIP_EXTRA_LIBS})
+
+if (CLIP_VULKAN)
+    target_compile_definitions(clip PUBLIC CLIP_USE_VULKAN)
+endif()
 
 if (BUILD_SHARED_LIBS)
     set(CLIP_BUILD_EXAMPLES OFF)
