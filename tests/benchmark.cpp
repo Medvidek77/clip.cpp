@@ -1,6 +1,6 @@
 #include "clip.h"
 #include "common-clip.h"
-#include "ggml/ggml.h"
+#include "ggml.h"
 
 #include <iostream>
 #include <map>
