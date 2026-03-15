@@ -187,7 +187,7 @@ if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm" OR ${CMAKE_SYSTEM_PROCESSOR} MATCHES
         endif()
         # TODO: armv6,7,8 version specific flags
     endif()
-elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "^(x86_64|i686|AMD64)$")
+elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "^(x86_64|i686|AMD64|amd64)$")
     message(STATUS "x86 detected")
     if (MSVC)
         if (CLIP_AVX512)
