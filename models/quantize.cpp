@@ -1,5 +1,5 @@
 #include "clip.h"
-#include "ggml/ggml.h"
+#include "ggml.h"
 #include <string>
 
 void print_usage(int argc, char ** argv) {
