@@ -436,19 +436,12 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
         struct ggml_init_params params = {
             .mem_size = ctx_size,
             .mem_buffer = NULL,
-            .no_alloc = false,
+            .no_alloc = true,
         };
 
         new_clip->ctx = ggml_init(params);
         if (!new_clip->ctx) {
             fprintf(stderr, "%s: ggml_init() failed\n", __func__);
-            clip_free(new_clip);
-            return nullptr;
-        }
-
-        auto fin = std::ifstream(fname, std::ios::binary);
-        if (!fin) {
-            printf("cannot open model file for loading tensors\n");
             clip_free(new_clip);
             return nullptr;
         }
@@ -459,19 +452,7 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
             struct ggml_tensor * t = ggml_get_tensor(meta, name);
             struct ggml_tensor * cur = ggml_dup_tensor(new_clip->ctx, t);
             ggml_set_name(cur, name);
-
-            const size_t offset = gguf_get_data_offset(ctx) + gguf_get_tensor_offset(ctx, i);
-            fin.seekg(offset, std::ios::beg);
-            if (!fin) {
-                printf("%s: failed to seek for tensor %s\n", __func__, name);
-                clip_free(new_clip);
-                return nullptr;
-            }
-
-            fin.read(reinterpret_cast<char *>(cur->data), ggml_nbytes(t));
         }
-
-        fin.close();
     }
 
     // text model
@@ -627,6 +608,30 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
         fprintf(stderr, "%s: ggml_backend_alloc_ctx_tensors() failed\n", __func__);
         clip_free(new_clip);
         return nullptr;
+    }
+
+    // load tensor data
+    {
+        auto fin = std::ifstream(fname, std::ios::binary);
+        if (!fin) {
+            printf("cannot open model file for loading tensors\n");
+            clip_free(new_clip);
+            return nullptr;
+        }
+
+        std::vector<char> read_buf;
+        const int n_tensors = gguf_get_n_tensors(ctx);
+        for (int i = 0; i < n_tensors; ++i) {
+            const char * name = gguf_get_tensor_name(ctx, i);
+            struct ggml_tensor * cur = ggml_get_tensor(new_clip->ctx, name);
+            const size_t offset = gguf_get_data_offset(ctx) + gguf_get_tensor_offset(ctx, i);
+            fin.seekg(offset, std::ios::beg);
+            size_t num_bytes = ggml_nbytes(cur);
+            read_buf.resize(num_bytes);
+            fin.read(read_buf.data(), num_bytes);
+            ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
+        }
+        fin.close();
     }
 
     new_clip->allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(new_clip->backend));
@@ -1089,13 +1094,13 @@ bool clip_text_encode(const clip_ctx * ctx, const int n_threads, const clip_toke
     struct ggml_cgraph * gf = ggml_new_graph(ctx0);
 
     struct ggml_tensor * input_ids = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, N);
-    ggml_backend_buffer_t input_ids_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(input_ids));
-    ggml_backend_tensor_alloc(input_ids_buf, input_ids, input_ids_buf);
+    ggml_backend_buffer_t input_ids_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), input_ids));
+    ggml_backend_tensor_alloc(input_ids_buf, input_ids, ggml_backend_buffer_get_base(input_ids_buf));
     ggml_backend_tensor_set(input_ids, tokens->data, 0, N * ggml_element_size(input_ids));
 
     struct ggml_tensor * positions = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, N);
-    ggml_backend_buffer_t positions_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(positions));
-    ggml_backend_tensor_alloc(positions_buf, positions, positions_buf);
+    ggml_backend_buffer_t positions_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), positions));
+    ggml_backend_tensor_alloc(positions_buf, positions, ggml_backend_buffer_get_base(positions_buf));
 
     int32_t * pos_data = new int32_t[N];
     for (int i = 0; i < N; i++) {
@@ -1200,8 +1205,8 @@ bool clip_text_encode(const clip_ctx * ctx, const int n_threads, const clip_toke
     struct ggml_tensor * eot = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 1);
 
     // allocate and set eot
-    ggml_backend_buffer_t eot_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(eot));
-    ggml_backend_tensor_alloc(eot_buf, eot, eot_buf);
+    ggml_backend_buffer_t eot_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), eot));
+    ggml_backend_tensor_alloc(eot_buf, eot, ggml_backend_buffer_get_base(eot_buf));
     int32_t eot_val = N - 1;
     ggml_backend_tensor_set(eot, &eot_val, 0, sizeof(int32_t));
 
@@ -1328,8 +1333,8 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     struct ggml_cgraph * gf = ggml_new_graph(ctx0);
 
     struct ggml_tensor * inp_raw = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, image_size, image_size, 3, batch_size);
-    ggml_backend_buffer_t inp_raw_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(inp_raw));
-    ggml_backend_tensor_alloc(inp_raw_buf, inp_raw, inp_raw_buf);
+    ggml_backend_buffer_t inp_raw_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), inp_raw));
+    ggml_backend_tensor_alloc(inp_raw_buf, inp_raw, ggml_backend_buffer_get_base(inp_raw_buf));
 
     {
         float * data = new float[ggml_nelements(inp_raw)];
@@ -1373,8 +1378,8 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
         ggml_acc(ctx0, embeddings, inp, embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], model.class_embedding->nb[1]);
 
     struct ggml_tensor * positions = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, num_positions);
-    ggml_backend_buffer_t positions_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(positions));
-    ggml_backend_tensor_alloc(positions_buf, positions, positions_buf);
+    ggml_backend_buffer_t positions_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), positions));
+    ggml_backend_tensor_alloc(positions_buf, positions, ggml_backend_buffer_get_base(positions_buf));
 
     int32_t * pos_data = new int32_t[num_positions];
     for (int i = 0; i < num_positions; i++) {
@@ -1476,8 +1481,8 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
 
     // get the output of cls token, e.g., 0th index
     struct ggml_tensor * cls = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, batch_size);
-    ggml_backend_buffer_t cls_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(cls));
-    ggml_backend_tensor_alloc(cls_buf, cls, cls_buf);
+    ggml_backend_buffer_t cls_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), cls));
+    ggml_backend_tensor_alloc(cls_buf, cls, ggml_backend_buffer_get_base(cls_buf));
 
     int32_t * cls_data = new int32_t[batch_size];
     for (int b = 0; b < batch_size; b++) {
@@ -1506,8 +1511,8 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
 
     for (int b = 0; b < batch_size; b++) {
         struct ggml_tensor * b_tensor = ggml_new_i32(ctx0, b);
-        ggml_backend_buffer_t b_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(b_tensor));
-        ggml_backend_tensor_alloc(b_buf, b_tensor, b_buf);
+        ggml_backend_buffer_t b_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), b_tensor));
+        ggml_backend_tensor_alloc(b_buf, b_tensor, ggml_backend_buffer_get_base(b_buf));
         int32_t b_val = b;
         ggml_backend_tensor_set(b_tensor, &b_val, 0, sizeof(int32_t));
         b_bufs.push_back(b_buf);
