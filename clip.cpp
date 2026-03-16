@@ -293,7 +293,10 @@ size_t get_mem_req_by_size(struct clip_ctx * ctx) {
         }
     case 909: // huge, two-tower
     case 520: // huge, vision-only
-        return 232 * mb;
+        if (n_positions > 577) {
+            return 512 * mb;
+        }
+        return 256 * mb;
     case 389: // huge, text-only
         return 120 * mb;
     default:
@@ -330,7 +333,10 @@ size_t get_scr_buf_req_by_size(struct clip_ctx * ctx) {
         }
     case 909:
     case 520:
-        return 144 * mb;
+        if (n_positions > 577) {
+            return 256 * mb;
+        }
+        return 192 * mb;
     case 389:
         return 60 * mb;
     default:
@@ -1379,7 +1385,7 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     embeddings = ggml_acc(ctx0, embeddings, ggml_repeat(ctx0, model.class_embedding, temp), embeddings->nb[1],
                           embeddings->nb[2], embeddings->nb[3], 0);
     embeddings =
-        ggml_acc(ctx0, embeddings, inp, embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], model.class_embedding->nb[1]);
+        ggml_acc(ctx0, embeddings, inp, embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], temp->nb[1]);
 
     struct ggml_tensor * positions = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, num_positions);
     ggml_backend_buffer_t positions_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), positions));
