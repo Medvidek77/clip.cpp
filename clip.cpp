@@ -1085,7 +1085,7 @@ bool clip_text_encode(const clip_ctx * ctx, const int n_threads, const clip_toke
     const float eps = hparams.eps;
 
     struct ggml_init_params params = {
-        .mem_size = ggml_tensor_overhead() * 1024,
+        .mem_size = ggml_tensor_overhead() * 8192 + ggml_graph_overhead(),
         .mem_buffer = NULL,
         .no_alloc = true,
     };
@@ -1324,7 +1324,7 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     int batch_size = imgs->size;
 
     struct ggml_init_params params = {
-        .mem_size = ggml_tensor_overhead() * 1024,
+        .mem_size = ggml_tensor_overhead() * 8192 + ggml_graph_overhead(),
         .mem_buffer = NULL,
         .no_alloc = true,
     };
