@@ -1369,7 +1369,11 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     // concat class_embeddings and patch_embeddings
     struct ggml_tensor * embeddings = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, hidden_size, num_positions, batch_size);
 
+    ggml_backend_buffer_t embeddings_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), embeddings));
+    ggml_backend_tensor_alloc(embeddings_buf, embeddings, ggml_backend_buffer_get_base(embeddings_buf));
+
     ggml_set_zero(embeddings);
+
     struct ggml_tensor * temp = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, hidden_size, 1, batch_size);
 
     embeddings = ggml_acc(ctx0, embeddings, ggml_repeat(ctx0, model.class_embedding, temp), embeddings->nb[1],
