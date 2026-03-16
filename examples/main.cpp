@@ -36,7 +36,7 @@ int main(int argc, char ** argv) {
     // To ensure both text and vision work without assertion crash when the model has none
     const int vec_dim = clip_get_vision_hparams(ctx)->projection_dim;
     std::vector<float> txt_vec(vec_dim);
-    clip_text_encode(ctx, params.n_threads, &tokens, txt_vec.data(), false);
+    clip_text_encode(ctx, params.n_threads, &tokens, txt_vec.data(), true);
 
     for (size_t i = 0; i < params.image_paths.size(); i++) {
         const char * img_path = params.image_paths[i].c_str();
@@ -50,7 +50,7 @@ int main(int argc, char ** argv) {
         clip_image_preprocess(ctx, &img0, &img_res);
 
         std::vector<float> img_vec(vec_dim);
-        clip_image_encode(ctx, params.n_threads, &img_res, img_vec.data(), false);
+        clip_image_encode(ctx, params.n_threads, &img_res, img_vec.data(), true);
 
         float score = clip_similarity_score(img_vec.data(), txt_vec.data(), vec_dim);
         printf("[%2.3f] %s\n", score, img_path);
