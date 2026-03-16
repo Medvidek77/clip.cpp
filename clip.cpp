@@ -1513,6 +1513,10 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     // normalize output embeddings
     struct ggml_tensor * output = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, projection_dim, batch_size);
 
+    ggml_backend_buffer_t output_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), output));
+    ggml_backend_tensor_alloc(output_buf, output, ggml_backend_buffer_get_base(output_buf));
+    ggml_set_zero(output);
+
     for (int b = 0; b < batch_size; b++) {
         struct ggml_tensor * b_tensor = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 1);
         ggml_backend_buffer_t b_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), b_tensor));
@@ -1590,6 +1594,7 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     ggml_backend_buffer_free(inp_raw_buf);
     ggml_backend_buffer_free(positions_buf);
     ggml_backend_buffer_free(cls_buf);
+    ggml_backend_buffer_free(output_buf);
     for (auto buf : b_bufs) {
         ggml_backend_buffer_free(buf);
     }
