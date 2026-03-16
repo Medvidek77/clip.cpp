@@ -2,6 +2,7 @@
 
 #include "clip.h"
 #include "common-clip.h"
+#include <vector>
 
 int main(int argc, char ** argv) {
     ggml_time_init();
@@ -21,41 +22,46 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    const int64_t t_image_load_us = ggml_time_us();
-
-    // load the image
-    const char * img_path = params.image_paths[0].c_str();
-    clip_image_u8 img0;
-    if (!clip_image_load_from_file(img_path, &img0)) {
-        fprintf(stderr, "%s: failed to load image from '%s'\n", __func__, img_path);
+    if (params.image_paths.empty()) {
+        fprintf(stderr, "%s: no image paths specified\n", __func__);
         return 1;
     }
 
-    const int64_t t_similarity_score = ggml_time_us();
-
     const char * text = params.texts[0].c_str();
-    float score;
 
-    if (!clip_compare_text_and_image(ctx, params.n_threads, text, &img0, &score)) {
-        printf("Unable to compare text and image\n");
-        clip_free(ctx);
-        return 1;
+    // Encode text only once
+    clip_tokens tokens;
+    clip_tokenize(ctx, text, &tokens);
+
+    // To ensure both text and vision work without assertion crash when the model has none
+    const int vec_dim = clip_get_vision_hparams(ctx)->projection_dim;
+    std::vector<float> txt_vec(vec_dim);
+    clip_text_encode(ctx, params.n_threads, &tokens, txt_vec.data(), false);
+
+    for (size_t i = 0; i < params.image_paths.size(); i++) {
+        const char * img_path = params.image_paths[i].c_str();
+        clip_image_u8 img0;
+        if (!clip_image_load_from_file(img_path, &img0)) {
+            fprintf(stderr, "failed to load image from '%s'\n", img_path);
+            continue;
+        }
+
+        clip_image_f32 img_res;
+        clip_image_preprocess(ctx, &img0, &img_res);
+
+        std::vector<float> img_vec(vec_dim);
+        clip_image_encode(ctx, params.n_threads, &img_res, img_vec.data(), false);
+
+        float score = clip_similarity_score(img_vec.data(), txt_vec.data(), vec_dim);
+        printf("[%2.3f] %s\n", score, img_path);
     }
 
     const int64_t t_main_end_us = ggml_time_us();
 
-    printf("%s: Similarity score = %2.3f\n", __func__, score);
-
     if (params.verbose >= 1) {
         printf("\n\nTimings\n");
-        printf("%s: Model loaded in %8.2f ms\n", __func__, (t_image_load_us - t_load_us) / 1000.0);
-        printf("%s: Image loaded in %8.2f ms\n", __func__, (t_similarity_score - t_image_load_us) / 1000.0);
-        printf("%s: Similarity score calculated in %8.2f ms\n", __func__, (t_main_end_us - t_similarity_score) / 1000.0);
         printf("%s: Total time: %8.2f ms\n", __func__, (t_main_end_us - t_main_start_us) / 1000.0);
     }
-
-    // Usage of the individual functions that make up clip_compare_text_and_image is demonstrated in the
-    // `extract` example.
 
     clip_free(ctx);
 
