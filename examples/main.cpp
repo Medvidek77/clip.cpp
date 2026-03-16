@@ -7,11 +7,7 @@
 #include <iostream>
 
 void extract_tiles(const clip_image_u8* img, int target_size, std::vector<clip_image_u8>& tiles) {
-    // Strategy: calculate aspect ratio. If both dimensions are close to target_size, just return the image.
-    // Otherwise, generate overlapping tiles of size target_size x target_size.
-    // Also include a downscaled version of the whole image (which clip_image_preprocess does by default).
-
-    // First, always include the original image as the global context
+    // Global context
     clip_image_u8 global_img;
     global_img.nx = img->nx;
     global_img.ny = img->ny;
@@ -25,39 +21,75 @@ void extract_tiles(const clip_image_u8* img, int target_size, std::vector<clip_i
         return;
     }
 
-    // Determine number of tiles
-    int nx_tiles = std::max(1, (int)std::ceil((float)img->nx / target_size));
-    int ny_tiles = std::max(1, (int)std::ceil((float)img->ny / target_size));
+    // Optimized approach: resize shortest side to target_size, then take up to 3 crops along the longest side.
+    float scale = (float)target_size / std::min(img->nx, img->ny);
+    int new_nx = std::max(target_size, (int)std::round(img->nx * scale));
+    int new_ny = std::max(target_size, (int)std::round(img->ny * scale));
 
-    // For single tile dimensions, don't re-add what is already covered by the global context if it's perfectly sized
-    if (nx_tiles == 1 && ny_tiles == 1) return;
+    // Very simple and fast nearest neighbor downscaling
+    std::vector<uint8_t> scaled_data(3 * new_nx * new_ny);
+    for (int y = 0; y < new_ny; y++) {
+        int src_y = std::min((int)(y / scale), img->ny - 1);
+        for (int x = 0; x < new_nx; x++) {
+            int src_x = std::min((int)(x / scale), img->nx - 1);
+            int src_idx = 3 * (src_y * img->nx + src_x);
+            int dst_idx = 3 * (y * new_nx + x);
 
-    // Calculate strides to cover the image
-    int stride_x = nx_tiles > 1 ? (img->nx - target_size) / (nx_tiles - 1) : 0;
-    int stride_y = ny_tiles > 1 ? (img->ny - target_size) / (ny_tiles - 1) : 0;
-
-    for (int y = 0; y < ny_tiles; y++) {
-        for (int x = 0; x < nx_tiles; x++) {
-            int offset_x = x * stride_x;
-            int offset_y = y * stride_y;
-
-            clip_image_u8 tile;
-            tile.nx = target_size;
-            tile.ny = target_size;
-            tile.size = 3 * target_size * target_size;
-            tile.data = new uint8_t[tile.size];
-
-            for (int ty = 0; ty < target_size; ty++) {
-                for (int tx = 0; tx < target_size; tx++) {
-                    int src_idx = 3 * ((offset_y + ty) * img->nx + (offset_x + tx));
-                    int dst_idx = 3 * (ty * target_size + tx);
-                    tile.data[dst_idx] = img->data[src_idx];
-                    tile.data[dst_idx + 1] = img->data[src_idx + 1];
-                    tile.data[dst_idx + 2] = img->data[src_idx + 2];
-                }
-            }
-            tiles.push_back(tile);
+            scaled_data[dst_idx] = img->data[src_idx];
+            scaled_data[dst_idx + 1] = img->data[src_idx + 1];
+            scaled_data[dst_idx + 2] = img->data[src_idx + 2];
         }
+    }
+
+    // Extract up to 3 overlapping tiles from the resized image (start, center, end)
+    std::vector<std::pair<int, int>> offsets;
+
+    if (new_nx > new_ny) {
+        // Horizontal image
+        offsets.push_back({0, 0});
+        if (new_nx > target_size) {
+            offsets.push_back({(new_nx - target_size) / 2, 0});
+            offsets.push_back({new_nx - target_size, 0});
+        }
+    } else {
+        // Vertical or square image
+        offsets.push_back({0, 0});
+        if (new_ny > target_size) {
+            offsets.push_back({0, (new_ny - target_size) / 2});
+            offsets.push_back({0, new_ny - target_size});
+        }
+    }
+
+    for (size_t i = 0; i < offsets.size(); i++) {
+        // Check for duplicates
+        bool is_duplicate = false;
+        for (size_t j = 0; j < i; j++) {
+            if (offsets[i] == offsets[j]) {
+                is_duplicate = true;
+                break;
+            }
+        }
+        if (is_duplicate) continue;
+
+        int offset_x = offsets[i].first;
+        int offset_y = offsets[i].second;
+
+        clip_image_u8 tile;
+        tile.nx = target_size;
+        tile.ny = target_size;
+        tile.size = 3 * target_size * target_size;
+        tile.data = new uint8_t[tile.size];
+
+        for (int ty = 0; ty < target_size; ty++) {
+            for (int tx = 0; tx < target_size; tx++) {
+                int src_idx = 3 * ((offset_y + ty) * new_nx + (offset_x + tx));
+                int dst_idx = 3 * (ty * target_size + tx);
+                tile.data[dst_idx] = scaled_data[src_idx];
+                tile.data[dst_idx + 1] = scaled_data[src_idx + 1];
+                tile.data[dst_idx + 2] = scaled_data[src_idx + 2];
+            }
+        }
+        tiles.push_back(tile);
     }
 }
 
