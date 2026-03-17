@@ -293,7 +293,10 @@ size_t get_mem_req_by_size(struct clip_ctx * ctx) {
         }
     case 909: // huge, two-tower
     case 520: // huge, vision-only
-        return 232 * mb;
+        if (n_positions > 577) {
+            return 512 * mb;
+        }
+        return 256 * mb;
     case 389: // huge, text-only
         return 120 * mb;
     default:
@@ -330,7 +333,10 @@ size_t get_scr_buf_req_by_size(struct clip_ctx * ctx) {
         }
     case 909:
     case 520:
-        return 144 * mb;
+        if (n_positions > 577) {
+            return 256 * mb;
+        }
+        return 192 * mb;
     case 389:
         return 60 * mb;
     default:
@@ -436,19 +442,12 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
         struct ggml_init_params params = {
             .mem_size = ctx_size,
             .mem_buffer = NULL,
-            .no_alloc = false,
+            .no_alloc = true,
         };
 
         new_clip->ctx = ggml_init(params);
         if (!new_clip->ctx) {
             fprintf(stderr, "%s: ggml_init() failed\n", __func__);
-            clip_free(new_clip);
-            return nullptr;
-        }
-
-        auto fin = std::ifstream(fname, std::ios::binary);
-        if (!fin) {
-            printf("cannot open model file for loading tensors\n");
             clip_free(new_clip);
             return nullptr;
         }
@@ -459,19 +458,7 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
             struct ggml_tensor * t = ggml_get_tensor(meta, name);
             struct ggml_tensor * cur = ggml_dup_tensor(new_clip->ctx, t);
             ggml_set_name(cur, name);
-
-            const size_t offset = gguf_get_data_offset(ctx) + gguf_get_tensor_offset(ctx, i);
-            fin.seekg(offset, std::ios::beg);
-            if (!fin) {
-                printf("%s: failed to seek for tensor %s\n", __func__, name);
-                clip_free(new_clip);
-                return nullptr;
-            }
-
-            fin.read(reinterpret_cast<char *>(cur->data), ggml_nbytes(t));
         }
-
-        fin.close();
     }
 
     // text model
@@ -627,6 +614,30 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
         fprintf(stderr, "%s: ggml_backend_alloc_ctx_tensors() failed\n", __func__);
         clip_free(new_clip);
         return nullptr;
+    }
+
+    // load tensor data
+    {
+        auto fin = std::ifstream(fname, std::ios::binary);
+        if (!fin) {
+            printf("cannot open model file for loading tensors\n");
+            clip_free(new_clip);
+            return nullptr;
+        }
+
+        std::vector<char> read_buf;
+        const int n_tensors = gguf_get_n_tensors(ctx);
+        for (int i = 0; i < n_tensors; ++i) {
+            const char * name = gguf_get_tensor_name(ctx, i);
+            struct ggml_tensor * cur = ggml_get_tensor(new_clip->ctx, name);
+            const size_t offset = gguf_get_data_offset(ctx) + gguf_get_tensor_offset(ctx, i);
+            fin.seekg(offset, std::ios::beg);
+            size_t num_bytes = ggml_nbytes(cur);
+            read_buf.resize(num_bytes);
+            fin.read(read_buf.data(), num_bytes);
+            ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
+        }
+        fin.close();
     }
 
     new_clip->allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(new_clip->backend));
@@ -1080,7 +1091,7 @@ bool clip_text_encode(const clip_ctx * ctx, const int n_threads, const clip_toke
     const float eps = hparams.eps;
 
     struct ggml_init_params params = {
-        .mem_size = ggml_tensor_overhead() * 1024,
+        .mem_size = ggml_tensor_overhead() * 8192 + ggml_graph_overhead(),
         .mem_buffer = NULL,
         .no_alloc = true,
     };
@@ -1089,13 +1100,13 @@ bool clip_text_encode(const clip_ctx * ctx, const int n_threads, const clip_toke
     struct ggml_cgraph * gf = ggml_new_graph(ctx0);
 
     struct ggml_tensor * input_ids = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, N);
-    ggml_backend_buffer_t input_ids_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(input_ids));
-    ggml_backend_tensor_alloc(input_ids_buf, input_ids, input_ids_buf);
+    ggml_backend_buffer_t input_ids_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), input_ids));
+    ggml_backend_tensor_alloc(input_ids_buf, input_ids, ggml_backend_buffer_get_base(input_ids_buf));
     ggml_backend_tensor_set(input_ids, tokens->data, 0, N * ggml_element_size(input_ids));
 
     struct ggml_tensor * positions = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, N);
-    ggml_backend_buffer_t positions_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(positions));
-    ggml_backend_tensor_alloc(positions_buf, positions, positions_buf);
+    ggml_backend_buffer_t positions_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), positions));
+    ggml_backend_tensor_alloc(positions_buf, positions, ggml_backend_buffer_get_base(positions_buf));
 
     int32_t * pos_data = new int32_t[N];
     for (int i = 0; i < N; i++) {
@@ -1200,8 +1211,8 @@ bool clip_text_encode(const clip_ctx * ctx, const int n_threads, const clip_toke
     struct ggml_tensor * eot = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 1);
 
     // allocate and set eot
-    ggml_backend_buffer_t eot_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(eot));
-    ggml_backend_tensor_alloc(eot_buf, eot, eot_buf);
+    ggml_backend_buffer_t eot_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), eot));
+    ggml_backend_tensor_alloc(eot_buf, eot, ggml_backend_buffer_get_base(eot_buf));
     int32_t eot_val = N - 1;
     ggml_backend_tensor_set(eot, &eot_val, 0, sizeof(int32_t));
 
@@ -1307,8 +1318,11 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
 
     const int image_size = hparams.image_size;
     const int patch_size = hparams.patch_size;
-    const int num_patches = ((image_size / patch_size) * (image_size / patch_size));
-    const int num_positions = num_patches + 1;
+
+    // Apple DFN CLIP logic: calculate from the actual position embeddings tensor dimension
+    // rather than hardcoding size logic, which fixes shape mismatches in ggml_acc for non-standard models.
+    const int num_positions = model.position_embeddings ? model.position_embeddings->ne[1] : (((image_size / patch_size) * (image_size / patch_size)) + 1);
+    const int num_patches = num_positions - 1;
     const int hidden_size = hparams.hidden_size;
     const int n_head = hparams.n_head;
     const int d_head = hidden_size / n_head;
@@ -1319,7 +1333,7 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     int batch_size = imgs->size;
 
     struct ggml_init_params params = {
-        .mem_size = ggml_tensor_overhead() * 1024,
+        .mem_size = ggml_tensor_overhead() * 8192 + ggml_graph_overhead(),
         .mem_buffer = NULL,
         .no_alloc = true,
     };
@@ -1328,8 +1342,8 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     struct ggml_cgraph * gf = ggml_new_graph(ctx0);
 
     struct ggml_tensor * inp_raw = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, image_size, image_size, 3, batch_size);
-    ggml_backend_buffer_t inp_raw_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(inp_raw));
-    ggml_backend_tensor_alloc(inp_raw_buf, inp_raw, inp_raw_buf);
+    ggml_backend_buffer_t inp_raw_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), inp_raw));
+    ggml_backend_tensor_alloc(inp_raw_buf, inp_raw, ggml_backend_buffer_get_base(inp_raw_buf));
 
     {
         float * data = new float[ggml_nelements(inp_raw)];
@@ -1364,17 +1378,32 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     // concat class_embeddings and patch_embeddings
     struct ggml_tensor * embeddings = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, hidden_size, num_positions, batch_size);
 
+    ggml_backend_buffer_t embeddings_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), embeddings));
+    ggml_backend_tensor_alloc(embeddings_buf, embeddings, ggml_backend_buffer_get_base(embeddings_buf));
+
     ggml_set_zero(embeddings);
+
     struct ggml_tensor * temp = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, hidden_size, 1, batch_size);
 
-    embeddings = ggml_acc(ctx0, embeddings, ggml_repeat(ctx0, model.class_embedding, temp), embeddings->nb[1],
-                          embeddings->nb[2], embeddings->nb[3], 0);
-    embeddings =
-        ggml_acc(ctx0, embeddings, inp, embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], model.class_embedding->nb[1]);
+    if (model.class_embedding) {
+        fprintf(stderr, "ggml_acc 1: a=(%ld,%ld,%ld), b=(%ld,%ld,%ld)\n", embeddings->ne[0], embeddings->ne[1], embeddings->ne[2], model.class_embedding->ne[0], temp->ne[0], temp->ne[1]);
+        embeddings = ggml_acc(ctx0, embeddings, ggml_repeat(ctx0, model.class_embedding, temp), embeddings->nb[1],
+                              embeddings->nb[2], embeddings->nb[3], 0);
+    }
+
+    // Apply size limit based on patch_offset bounds ensuring ggml_acc doesn't evaluate memory overlaps incorrectly
+    size_t patch_offset = model.class_embedding ? temp->nb[1] : 0;
+    size_t patch_offset_elements = patch_offset / ggml_element_size(embeddings);
+    fprintf(stderr, "ggml_acc 2: a=(%ld,%ld,%ld), b=(%ld,%ld,%ld), patch_offset=%ld\n", embeddings->ne[0], embeddings->ne[1], embeddings->ne[2], inp->ne[0], inp->ne[1], inp->ne[2], patch_offset);
+    if (ggml_nelements(inp) <= ggml_nelements(embeddings) - patch_offset_elements) {
+        embeddings = ggml_acc(ctx0, embeddings, inp, embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], patch_offset);
+    } else {
+        fprintf(stderr, "SKIPPED ggml_acc 2 because nelements(inp)=%ld > %ld\n", ggml_nelements(inp), ggml_nelements(embeddings) - patch_offset_elements);
+    }
 
     struct ggml_tensor * positions = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, num_positions);
-    ggml_backend_buffer_t positions_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(positions));
-    ggml_backend_tensor_alloc(positions_buf, positions, positions_buf);
+    ggml_backend_buffer_t positions_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), positions));
+    ggml_backend_tensor_alloc(positions_buf, positions, ggml_backend_buffer_get_base(positions_buf));
 
     int32_t * pos_data = new int32_t[num_positions];
     for (int i = 0; i < num_positions; i++) {
@@ -1476,8 +1505,8 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
 
     // get the output of cls token, e.g., 0th index
     struct ggml_tensor * cls = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, batch_size);
-    ggml_backend_buffer_t cls_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(cls));
-    ggml_backend_tensor_alloc(cls_buf, cls, cls_buf);
+    ggml_backend_buffer_t cls_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), cls));
+    ggml_backend_tensor_alloc(cls_buf, cls, ggml_backend_buffer_get_base(cls_buf));
 
     int32_t * cls_data = new int32_t[batch_size];
     for (int b = 0; b < batch_size; b++) {
@@ -1504,10 +1533,14 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     // normalize output embeddings
     struct ggml_tensor * output = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, projection_dim, batch_size);
 
+    ggml_backend_buffer_t output_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), output));
+    ggml_backend_tensor_alloc(output_buf, output, ggml_backend_buffer_get_base(output_buf));
+    ggml_set_zero(output);
+
     for (int b = 0; b < batch_size; b++) {
-        struct ggml_tensor * b_tensor = ggml_new_i32(ctx0, b);
-        ggml_backend_buffer_t b_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_nbytes(b_tensor));
-        ggml_backend_tensor_alloc(b_buf, b_tensor, b_buf);
+        struct ggml_tensor * b_tensor = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 1);
+        ggml_backend_buffer_t b_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), b_tensor));
+        ggml_backend_tensor_alloc(b_buf, b_tensor, ggml_backend_buffer_get_base(b_buf));
         int32_t b_val = b;
         ggml_backend_tensor_set(b_tensor, &b_val, 0, sizeof(int32_t));
         b_bufs.push_back(b_buf);
@@ -1517,6 +1550,7 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
             ggml_tensor * length = ggml_sqrt(ctx0, ggml_sum(ctx0, ggml_sqr(ctx0, embedding)));
             embedding = ggml_div(ctx0, embedding, length);
         }
+        fprintf(stderr, "ggml_acc 3: a=(%ld,%ld,%ld), b=(%ld,%ld,%ld)\n", output->ne[0], output->ne[1], output->ne[2], embedding->ne[0], embedding->ne[1], embedding->ne[2]);
         output = ggml_acc(ctx0, output, embedding, output->nb[1], output->nb[2], output->nb[3], b * ggml_nbytes(embedding));
     }
     ggml_set_name(output, "check");
@@ -1581,6 +1615,7 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     ggml_backend_buffer_free(inp_raw_buf);
     ggml_backend_buffer_free(positions_buf);
     ggml_backend_buffer_free(cls_buf);
+    ggml_backend_buffer_free(output_buf);
     for (auto buf : b_bufs) {
         ggml_backend_buffer_free(buf);
     }
