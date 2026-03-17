@@ -1390,8 +1390,11 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
                               embeddings->nb[2], embeddings->nb[3], 0);
     }
 
-    if (ggml_nelements(inp) <= ggml_nelements(embeddings)) {
-        embeddings = ggml_acc(ctx0, embeddings, inp, embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], model.class_embedding ? temp->nb[1] : 0);
+    // Apply size limit based on patch_offset bounds ensuring ggml_acc doesn't evaluate memory overlaps incorrectly
+    size_t patch_offset = model.class_embedding ? temp->nb[1] : 0;
+    size_t patch_offset_elements = patch_offset / ggml_element_size(embeddings);
+    if (ggml_nelements(inp) <= ggml_nelements(embeddings) - patch_offset_elements) {
+        embeddings = ggml_acc(ctx0, embeddings, inp, embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], patch_offset);
     }
 
     struct ggml_tensor * positions = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, num_positions);
