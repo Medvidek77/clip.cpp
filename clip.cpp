@@ -519,6 +519,10 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
             layer.ff_i_b = get_tensor(new_clip->ctx, format(TN_FFN_DOWN, "t", il, "bias"));
             layer.ff_o_b = get_tensor(new_clip->ctx, format(TN_FFN_UP, "t", il, "bias"));
         }
+
+        if (text_model.projection) {
+            hparams.projection_dim = text_model.projection->ne[0];
+        }
     }
 
     // vision model
@@ -580,6 +584,10 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
             layer.ln_2_b = get_tensor(new_clip->ctx, format(TN_LN_2, "v", il, "bias"));
             layer.ff_i_b = get_tensor(new_clip->ctx, format(TN_FFN_DOWN, "v", il, "bias"));
             layer.ff_o_b = get_tensor(new_clip->ctx, format(TN_FFN_UP, "v", il, "bias"));
+        }
+
+        if (vision_model.projection) {
+            hparams.projection_dim = vision_model.projection->ne[0];
         }
     }
 
