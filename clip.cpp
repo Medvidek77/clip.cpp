@@ -1318,8 +1318,11 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
 
     const int image_size = hparams.image_size;
     const int patch_size = hparams.patch_size;
-    const int num_patches = ((image_size / patch_size) * (image_size / patch_size));
-    const int num_positions = num_patches + 1;
+
+    // Apple DFN CLIP logic: calculate from the actual position embeddings tensor dimension
+    // rather than hardcoding size logic, which fixes shape mismatches in ggml_acc for non-standard models.
+    const int num_positions = model.position_embeddings ? model.position_embeddings->ne[1] : (((image_size / patch_size) * (image_size / patch_size)) + 1);
+    const int num_patches = num_positions - 1;
     const int hidden_size = hparams.hidden_size;
     const int n_head = hparams.n_head;
     const int d_head = hidden_size / n_head;
@@ -1382,10 +1385,14 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
 
     struct ggml_tensor * temp = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, hidden_size, 1, batch_size);
 
-    embeddings = ggml_acc(ctx0, embeddings, ggml_repeat(ctx0, model.class_embedding, temp), embeddings->nb[1],
-                          embeddings->nb[2], embeddings->nb[3], 0);
-    embeddings =
-        ggml_acc(ctx0, embeddings, inp, embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], temp->nb[1]);
+    if (model.class_embedding) {
+        embeddings = ggml_acc(ctx0, embeddings, ggml_repeat(ctx0, model.class_embedding, temp), embeddings->nb[1],
+                              embeddings->nb[2], embeddings->nb[3], 0);
+    }
+
+    if (ggml_nelements(inp) <= ggml_nelements(embeddings)) {
+        embeddings = ggml_acc(ctx0, embeddings, inp, embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], model.class_embedding ? temp->nb[1] : 0);
+    }
 
     struct ggml_tensor * positions = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, num_positions);
     ggml_backend_buffer_t positions_buf = ggml_backend_alloc_buffer(ctx->backend, ggml_backend_buft_get_alloc_size(ggml_backend_get_default_buffer_type(ctx->backend), positions));
