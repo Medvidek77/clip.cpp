@@ -1386,6 +1386,7 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     struct ggml_tensor * temp = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, hidden_size, 1, batch_size);
 
     if (model.class_embedding) {
+        fprintf(stderr, "ggml_acc 1: a=(%ld,%ld,%ld), b=(%ld,%ld,%ld)\n", embeddings->ne[0], embeddings->ne[1], embeddings->ne[2], model.class_embedding->ne[0], temp->ne[0], temp->ne[1]);
         embeddings = ggml_acc(ctx0, embeddings, ggml_repeat(ctx0, model.class_embedding, temp), embeddings->nb[1],
                               embeddings->nb[2], embeddings->nb[3], 0);
     }
@@ -1393,8 +1394,11 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
     // Apply size limit based on patch_offset bounds ensuring ggml_acc doesn't evaluate memory overlaps incorrectly
     size_t patch_offset = model.class_embedding ? temp->nb[1] : 0;
     size_t patch_offset_elements = patch_offset / ggml_element_size(embeddings);
+    fprintf(stderr, "ggml_acc 2: a=(%ld,%ld,%ld), b=(%ld,%ld,%ld), patch_offset=%ld\n", embeddings->ne[0], embeddings->ne[1], embeddings->ne[2], inp->ne[0], inp->ne[1], inp->ne[2], patch_offset);
     if (ggml_nelements(inp) <= ggml_nelements(embeddings) - patch_offset_elements) {
         embeddings = ggml_acc(ctx0, embeddings, inp, embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], patch_offset);
+    } else {
+        fprintf(stderr, "SKIPPED ggml_acc 2 because nelements(inp)=%ld > %ld\n", ggml_nelements(inp), ggml_nelements(embeddings) - patch_offset_elements);
     }
 
     struct ggml_tensor * positions = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, num_positions);
@@ -1546,6 +1550,7 @@ bool clip_image_batch_encode(const clip_ctx * ctx, const int n_threads, const cl
             ggml_tensor * length = ggml_sqrt(ctx0, ggml_sum(ctx0, ggml_sqr(ctx0, embedding)));
             embedding = ggml_div(ctx0, embedding, length);
         }
+        fprintf(stderr, "ggml_acc 3: a=(%ld,%ld,%ld), b=(%ld,%ld,%ld)\n", output->ne[0], output->ne[1], output->ne[2], embedding->ne[0], embedding->ne[1], embedding->ne[2]);
         output = ggml_acc(ctx0, output, embedding, output->nb[1], output->nb[2], output->nb[3], b * ggml_nbytes(embedding));
     }
     ggml_set_name(output, "check");
